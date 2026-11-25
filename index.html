@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cue Timer — Donovan Lafferty</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --text: #e6e9ef;
+      --muted: #8b93a6;
+      --accent: #4ade80;
+      --warn: #f87171;
+      --border: #2a2f3a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .card {
+      width: min(440px, 92vw);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 2rem;
+      text-align: center;
+    }
+    .label {
+      font-size: 0.75rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+    }
+    .time {
+      font-size: 4.25rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin: 0.25rem 0 1.5rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .time.done { color: var(--warn); }
+    .controls, .presets {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .presets { margin-top: 1rem; }
+    button {
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      font: inherit;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--text); }
+    button.primary {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .hints {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="label" id="status">STANDBY</div>
+    <div class="time" id="display">05:00</div>
+
+    <div class="controls">
+      <button class="primary" id="toggle">Start [Space]</button>
+      <button id="reset">Reset [R]</button>
+    </div>
+
+    <div class="presets">
+      <button data-sec="300">5m [1]</button>
+      <button data-sec="900">15m [2]</button>
+      <button data-sec="1500">25m [3]</button>
+    </div>
+
+    <div class="hints">Keyboard-first &bull; Zero dependencies &bull; Web Audio chime</div>
+  </main>
+
+  <script>
+    let audioCtx = null;
+    let durationMs = 300000;
+    let remainingMs = durationMs;
+    let endTime = null;
+    let rafId = null;
+    let running = false;
+
+    const display = document.getElementById('display');
+    const statusEl = document.getElementById('status');
+    const toggleBtn = document.getElementById('toggle');
+    const resetBtn = document.getElementById('reset');
+
+    function playChime() {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!audioCtx) audioCtx = new AudioContextClass();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      const now = audioCtx.currentTime;
+      [523.25, 659.25].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + i * 0.14);
+        gain.gain.setValueAtTime(0.001, now + i * 0.14);
+        gain.gain.exponentialRampToValueAtTime(0.18, now + i * 0.14 + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.14 + 0.55);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start(now + i * 0.14);
+        osc.stop(now + i * 0.14 + 0.6);
+      });
+    }
+
+    function render(ms) {
+      const totalSec = Math.ceil(Math.max(0, ms) / 1000);
+      const m = String(Math.floor(totalSec / 60)).padStart(2, '0');
+      const s = String(totalSec % 60).padStart(2, '0');
+      display.textContent = `${m}:${s}`;
+      document.title = running ? `${m}:${s} — Cue Timer` : 'Cue Timer — Donovan Lafferty';
+    }
+
+    function tick() {
+      remainingMs = endTime - performance.now();
+      if (remainingMs <= 0) {
+        remainingMs = 0;
+        running = false;
+        display.classList.add('done');
+        statusEl.textContent = 'CUE COMPLETE';
+        toggleBtn.textContent = 'Start [Space]';
+        render(0);
+        playChime();
+        return;
+      }
+      render(remainingMs);
+      rafId = requestAnimationFrame(tick);
+    }
+
+    function toggle() {
+      if (running) {
+        running = false;
+        cancelAnimationFrame(rafId);
+        remainingMs = Math.max(0, endTime - performance.now());
+        statusEl.textContent = 'PAUSED';
+        toggleBtn.textContent = 'Resume [Space]';
+      } else {
+        if (remainingMs <= 0) remainingMs = durationMs;
+        display.classList.remove('done');
+        running = true;
+        endTime = performance.now() + remainingMs;
+        statusEl.textContent = 'RUNNING';
+        toggleBtn.textContent = 'Pause [Space]';
+        tick();
+      }
+    }
+
+    function setPreset(sec) {
+      running = false;
+      cancelAnimationFrame(rafId);
+      durationMs = sec * 1000;
+      remainingMs = durationMs;
+      display.classList.remove('done');
+      statusEl.textContent = 'STANDBY';
+      toggleBtn.textContent = 'Start [Space]';
+      render(remainingMs);
+    }
+
+    toggleBtn.addEventListener('click', toggle);
+    resetBtn.addEventListener('click', () => setPreset(durationMs / 1000));
+    document.querySelectorAll('[data-sec]').forEach(btn => {
+      btn.addEventListener('click', () => setPreset(Number(btn.dataset.sec)));
+    });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') { e.preventDefault(); toggle(); }
+      if (e.key.toLowerCase() === 'r') setPreset(durationMs / 1000);
+      if (e.key === '1') setPreset(300);
+      if (e.key === '2') setPreset(900);
+      if (e.key === '3') setPreset(1500);
+    });
+
+    render(remainingMs);
+  </script>
+</body>
+</html>
